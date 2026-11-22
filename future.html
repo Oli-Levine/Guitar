@@ -1,0 +1,83 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fretty</title>
+<style>
+body{font-family:system-ui;background:#111;color:#eee;text-align:center;margin:0;padding:20px}
+button{font-size:16px;padding:12px 18px;margin:6px;border:0;border-radius:10px;background:#2d6cdf;color:#fff}
+button.off{background:#333}
+#task{font-size:22px;margin:24px 0;min-height:60px}
+#note{font-size:64px;margin:10px}
+#bar{position:relative;height:24px;background:#333;border-radius:12px;margin:16px auto;max-width:400px;overflow:hidden}
+#zone{position:absolute;left:37.5%;width:25%;height:100%;background:#1f7a3a}
+#dot{position:absolute;top:0;width:8px;height:100%;background:#fff;left:50%}
+#stats{font-size:18px}
+</style>
+<h1>Fretty 🎸</h1>
+<div id="stats"></div>
+<button id="mNote">Note</button><button id="mBend" class="off">Bend</button>
+<div id="task">Tap Start and allow the mic</div>
+<button id="hear">Hear target</button><button id="start">Start</button>
+<div id="note">—</div>
+<div id="cents"></div>
+<div id="bar"><div id="zone"></div><div id="dot"></div></div>
+<script>
+const $=id=>document.getElementById(id);
+const N=m=>['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][m%12]+(Math.floor(m/12)-1);
+const BENDS=[[59,7,'B'],[59,8,'B'],[64,5,'high E'],[64,7,'high E'],[55,9,'G']];
+let S=JSON.parse(localStorage.fretty||'{"xp":0,"streak":0,"day":""}');
+let ctx,an,buf,mode='note',target=64,hold=0;
+
+function render(){$('stats').textContent=`⭐ ${S.xp} XP   🔥 ${S.streak} day streak`}
+function newTask(){
+  if(mode==='note'){target=55+Math.floor(Math.random()*25);$('task').textContent='Play '+N(target)}
+  else{const[o,f,s]=BENDS[Math.floor(Math.random()*BENDS.length)];
+    target=o+f+2;$('task').textContent=`${s} string, fret ${f} (${N(o+f)}). Bend up to ${N(target)}`}
+}
+function win(){
+  const t=new Date().toDateString(),y=new Date(Date.now()-864e5).toDateString();
+  if(S.day!==t){S.streak=S.day===y?S.streak+1:1;S.day=t}
+  S.xp+=10;localStorage.fretty=JSON.stringify(S);render();newTask();
+}
+function setMode(m){mode=m;$('mNote').className=m==='note'?'':'off';$('mBend').className=m==='bend'?'':'off';newTask()}
+$('mNote').onclick=()=>setMode('note');$('mBend').onclick=()=>setMode('bend');
+
+$('hear').onclick=()=>{
+  ctx=ctx||new AudioContext();
+  const o=ctx.createOscillator();o.frequency.value=440*2**((target-69)/12);
+  o.connect(ctx.destination);o.start();o.stop(ctx.currentTime+1);
+};
+$('start').onclick=async()=>{
+  ctx=ctx||new AudioContext();
+  const s=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+  an=ctx.createAnalyser();an.fftSize=2048;buf=new Float32Array(2048);
+  ctx.createMediaStreamSource(s).connect(an);
+  $('start').style.display='none';newTask();setInterval(tick,60);
+};
+
+function pitch(b,sr){
+  let n=b.length,rms=0;for(const v of b)rms+=v*v;
+  if(Math.sqrt(rms/n)<0.01)return -1;
+  let r1=0,r2=n-1;
+  for(let i=0;i<n/2;i++)if(Math.abs(b[i])<0.2){r1=i;break}
+  for(let i=1;i<n/2;i++)if(Math.abs(b[n-i])<0.2){r2=n-i;break}
+  b=b.slice(r1,r2);n=b.length;
+  const c=new Array(n).fill(0);
+  for(let i=0;i<n;i++)for(let j=0;j<n-i;j++)c[i]+=b[j]*b[j+i];
+  let d=0;while(c[d]>c[d+1])d++;
+  let mv=-1,mp=-1;for(let i=d;i<n;i++)if(c[i]>mv){mv=c[i];mp=i}
+  let T=mp;const a=(c[T-1]+c[T+1]-2*c[T])/2,bb=(c[T+1]-c[T-1])/2;
+  if(a)T-=bb/(2*a);
+  return sr/T;
+}
+function tick(){
+  an.getFloatTimeDomainData(buf);
+  const f=pitch(buf,ctx.sampleRate);
+  if(f<60||f>1400){$('note').textContent='—';$('cents').textContent='';hold=0;return}
+  const m=69+12*Math.log2(f/440),c=(m-target)*100;
+  $('note').textContent=N(Math.round(m));
+  $('cents').textContent=(c>0?'+':'')+Math.round(c)+' cents';
+  $('dot').style.left=(50+Math.max(-100,Math.min(100,c))/4)+'%';
+  if(Math.abs(c)<25){hold+=60;if(hold>=800){hold=0;win()}}else hold=0;
+}
+render();
+</script>
